@@ -16,13 +16,16 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from model_parser import get_model, PrintNetList
 from minc2500 import MINC2500
-from cmstats import getCM, MulticlassStat
+from cmstats import updateCM, MulticlassStat
 
 
 def main():
+    global net
     # Those values are computed using the script 'get_minc2500_norm.py'
     mean = torch.Tensor([0.507207, 0.458292, 0.404162])
     std = torch.Tensor([0.254254, 0.252448, 0.266003])
+
+    batch_size = args.batch_size
 
     net = get_model(args.model, args.n_class)
     if net is None:
@@ -33,10 +36,18 @@ def main():
     if args.gpu > 0:
         net.cuda()
 
-    batch_size = args.batch_size
-
+    # Start training from scratch
     if not args.resume and not args.test:
-        # Start training from scratch
+        # Load the network model
+        net = get_model(args.model, args.n_class)
+        if net is None:
+            print("Unknown model name:", args.model + ".",
+                  "Use 'python model_parser.py --net-list'",
+                  "to check the available network models")
+            sys.exit(2)
+        if args.gpu > 0:
+            net.cuda()
+
         # Initialize the random generator
         if args.seed:
             seed = args.seed
@@ -63,8 +74,6 @@ def main():
         par = 0
         for parameter in net.parameters():
             par += parameter.numel()
-        # The number of parameters is stored in milions
-        par = par / 1e6
         json_data["num_params"] = par
 
         # Training parameters
@@ -73,11 +82,17 @@ def main():
         momentum = args.momentum
         w_decay = args.w_decay
 
+    # Resume from a training checkpoint
     elif args.resume:
-        # Resume a training checkpoint
         with open(args.resume, 'rb') as f:
             json_data = json.load(f)
         train_info = json_data["train"]
+
+        # Load the network model
+        net = get_model(json_data["model"], args.n_class)
+        if (json_data["gpu"] > 0):
+            net.cuda()
+
         if train_info["method"] == "SGD":
             optimizer = torch.optim.SGD(net.parameters(),
                                         train_info["init_l_rate"],
@@ -95,10 +110,15 @@ def main():
         chk_dir = os.path.split(args.resume)[0]
         net.load_state_dict(torch.load(os.path.join(chk_dir,
                                                     json_data["net_state"])))
-    else:
-        # Load the json data
+    else:  # Test the model
         with open(args.test, 'rb') as f:
             json_data = json.load(f)
+
+        # Load the network model
+        net = get_model(json_data["model"], args.n_class)
+        if (json_data["gpu"] > 0):
+            net.cuda()
+
         seed = json_data["train"]["seed"]
         torch.manual_seed(seed)
         if json_data["gpu"] > 0:
@@ -186,26 +206,26 @@ def main():
         for epoch in epochs:
             # Train the Model
             start_epoch = time()
-            train(train_loader, net, criterion, optimizer, epoch, epochs,
+            train(train_loader, criterion, optimizer, epoch, epochs,
                   loss_window)
 
             # Check accuracy on validation set
-            validate(val_loader, net, epoch, args.n_class, val_windows)
+            validate(val_loader, epoch, args.n_class, val_windows)
             json_data["train"]["train_time"] += round(time() - start_epoch, 3)
 
             # Save the checkpoint state
             save_state(net, json_data, epoch + 1, args)
 
     # Test the model on the testing set
-    test(test_loader, net, args.n_class, json_data)
+    test(test_loader, args, json_data)
     # Save the trained and tested model
     save_state(net, json_data, -1, args)
 
 
-def train(train_loader, model, criterion, optimizer, epoch, epochs,
+def train(train_loader, criterion, optimizer, epoch, epochs,
           loss_window):
     # Switch to train mode
-    model.train()
+    net.train()
 
     for i, (images, labels) in enumerate(train_loader):
         if args.gpu > 0:
@@ -217,7 +237,7 @@ def train(train_loader, model, criterion, optimizer, epoch, epochs,
 
         # Forward + Backward + Optimize
         optimizer.zero_grad()
-        outputs = model(images)
+        outputs = net(images)
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
@@ -232,9 +252,9 @@ def train(train_loader, model, criterion, optimizer, epoch, epochs,
                      loss.data[0]))
 
 
-def validate(val_loader, model, epoch, n_class, val_windows):
+def validate(val_loader, epoch, n_class, val_windows):
     # Switch to evaluation mode
-    model.eval()
+    net.eval()
 
     # Create the confusion matrix
     cm = np.zeros([n_class, n_class])
@@ -244,15 +264,15 @@ def validate(val_loader, model, epoch, n_class, val_windows):
         else:
             images = Variable(images)
 
-        outputs = model(images)
+        outputs = net(images)
         _, predicted = torch.max(outputs.data, 1)
         # Update the confusion matrix
-        cm = getCM(cm, predicted.cpu(), labels)
+        cm = updateCM(cm, predicted.cpu(), labels)
 
     stats = MulticlassStat(cm)
     acc = stats.accuracy
-    prec = stats.precision
-    recall = stats.recall
+    prec = stats.precision["macro"]
+    Fscore = stats.Fscore["macro"]
     vis.line(
         X=torch.ones((1, 1)).cpu() * (epoch + 1),
         Y=torch.ones((1, 1)).cpu() * acc,
@@ -265,20 +285,22 @@ def validate(val_loader, model, epoch, n_class, val_windows):
         update='append')
     vis.line(
         X=torch.ones((1, 1)).cpu() * (epoch + 1),
-        Y=torch.ones((1, 1)).cpu() * recall,
+        Y=torch.ones((1, 1)).cpu() * Fscore,
         win=val_windows[2],
         update='append')
     print('Validation: accuracy of the model: %.2f %%'
           % (acc * 100))
 
 
-def test(test_loader, model, n_class, json_data):
+def test(test_loader, args, json_data):
     # Switch to evaluation mode
-    model.eval()
+    net.eval()
 
     test_time = 0.0
+    scores = torch.Tensor()
+    all_labels = torch.LongTensor()
     # Create the confusion matrix
-    cm = np.zeros([n_class, n_class])
+    cm = np.zeros([args.n_class, args.n_class])
     for images, labels in test_loader:
         start_batch = time()
         if args.gpu > 0:
@@ -286,42 +308,58 @@ def test(test_loader, model, n_class, json_data):
         else:
             images = Variable(images)
 
-        outputs = model(images)
+        outputs = net(images)
+        scores = torch.cat((scores, outputs.cpu().data))
+        all_labels = torch.cat((all_labels, labels))
         _, predicted = torch.max(outputs.data, 1)
         test_time += time() - start_batch
         # Update the confusion matrix
-        cm = getCM(cm, predicted.cpu(), labels)
+        cm = updateCM(cm, predicted.cpu(), labels)
 
+    # Save the scores on the testing set
+    f_name = os.path.join(args.save_dir, json_data["impl"] + "_" +
+                          json_data["model"] + "_" +
+                          json_data["dataset"] + "_" +
+                          json_data["UUID"] + ".scores")
+    torch.save(scores, f_name)
+
+    # Compute the testing statistics
     stats = MulticlassStat(cm)
     print('******Test Results******')
     print('Time: ', round(test_time, 3), "seconds")
     acc = stats.accuracy
-    prec = stats.precision
-    recall = stats.recall
+    prec = stats.precision["macro"]
+    Fscore = stats.Fscore["macro"]
     print('Accuracy: %.2f %%'
           % (acc * 100))
     print('Precision: %.2f %%'
           % (prec * 100))
-    print('Recall: %.2f %%'
-          % (recall * 100))
+    print('Fscore: %.2f %%'
+          % (Fscore * 100))
 
     # Update the json data
     json_data["confusion_matrix"] = pd.DataFrame(cm).to_dict(orient='split')
     json_data["test_accuracy"] = round(acc, 4)
     json_data["test_precision"] = round(prec, 4)
+    json_data["test_Fscore"] = round(Fscore, 4)
     json_data["test_time"] = round(test_time, 6)
+
+    # ret = stats.oneclass_decision_function_to_roc(all_labels.numpy(),
+    #                                              scores.numpy())
+    ret = stats.confusion_matrix_to_roc()
+    stats.plotmulticlass(ret["fpr"], ret["tpr"], ret["roc_auc"])
 
 
 def save_state(net, json_data, epoch, args):
     if epoch == -1:
         dir = args.save_dir
-        epoch_str = 'trained'
+        epoch_str = ''
         if "last_epoch" in json_data["train"]:
             del json_data["train"]["last_epoch"]
     else:
         json_data["train"]["last_epoch"] = epoch
         dir = args.chk_dir
-        epoch_str = 'epoch_' + str(epoch)
+        epoch_str = '_epoch_' + str(epoch)
 
     if epoch == 1:
         # Generate the UUID (8 characters long)
@@ -333,7 +371,7 @@ def save_state(net, json_data, epoch, args):
     f_name = os.path.join(dir, json_data["impl"] + "_" +
                           json_data["model"] + "_" +
                           json_data["dataset"] + "_" +
-                          id + "_" + epoch_str)
+                          id + epoch_str)
     # Save model parameters
     torch.save(net.state_dict(), f_name + '.params')
     # Save experiment metadata
@@ -353,10 +391,10 @@ if __name__ == '__main__':
                         'Data/pytorch_datasets/minc-2500', help='path to ' +
                         'dataset (default: /media/paolo/Data/' +
                         'pytorch_datasets/minc-2500)')
-    parser.add_argument('--save-dir', metavar='DIR', default='./trained',
-                        help='path to trained models default(trained)')
-    parser.add_argument('--chk-dir', metavar='DIR', default='./checkpoint',
-                        help='path to checkpoints default(checkpoints)')
+    parser.add_argument('--save-dir', metavar='DIR', default='./results',
+                        help='path to trained models (default: results/)')
+    parser.add_argument('--chk-dir', metavar='DIR', default='./checkpoints',
+                        help='path to checkpoints (default: checkpoints/)')
     parser.add_argument('--workers', metavar='W', type=int, default=8,
                         help='number of worker threads for the data loader')
     # Model Options
@@ -384,7 +422,7 @@ if __name__ == '__main__':
                         help='weigth decay (default: 1e-4)')
     parser.add_argument('--seed', type=int, metavar='s',
                         default=179424691,
-                        help='random seed (default: random)')
+                        help='random seed (default: 179424691)')
     # Other Options
     parser.add_argument('--net-list', action=PrintNetList,
                         help='Print the list of the available network' +
