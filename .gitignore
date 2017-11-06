@@ -99,3 +99,7 @@ ENV/
 
 # mypy
 .mypy_cache/
+
+# Checkpoints and trained networks
+checkpoint/
+trained/
