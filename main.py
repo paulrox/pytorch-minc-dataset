@@ -1,5 +1,6 @@
 from __future__ import print_function
 import numpy as np
+import pandas as pd
 import argparse
 import json
 import os
@@ -15,7 +16,7 @@ from torch.utils.data import DataLoader
 from torchvision import transforms
 from model_parser import get_model, PrintNetList
 from minc2500 import MINC2500
-from multiclassCM import confusionMatrix, getAccuracy, getPrecision, getRecall
+from cmstats import getCM, MulticlassStat
 
 
 def main():
@@ -235,9 +236,8 @@ def validate(val_loader, model, epoch, n_class, val_windows):
     # Switch to evaluation mode
     model.eval()
 
-    # Create an empty confusion matrix
+    # Create the confusion matrix
     cm = np.zeros([n_class, n_class])
-
     for images, labels in val_loader:
         if args.gpu > 0:
             images = Variable(images.cuda(async=True), volatile=True)
@@ -247,11 +247,12 @@ def validate(val_loader, model, epoch, n_class, val_windows):
         outputs = model(images)
         _, predicted = torch.max(outputs.data, 1)
         # Update the confusion matrix
-        cm = confusionMatrix(cm, predicted.cpu(), labels)
+        cm = getCM(cm, predicted.cpu(), labels)
 
-    acc = getAccuracy(cm)
-    prec = getPrecision(cm)
-    recall = getRecall(cm)
+    stats = MulticlassStat(cm)
+    acc = stats.accuracy
+    prec = stats.precision
+    recall = stats.recall
     vis.line(
         X=torch.ones((1, 1)).cpu() * (epoch + 1),
         Y=torch.ones((1, 1)).cpu() * acc,
@@ -275,9 +276,9 @@ def test(test_loader, model, n_class, json_data):
     # Switch to evaluation mode
     model.eval()
 
-    # Create an empty confusion matrix
-    cm = np.zeros([n_class, n_class])
     test_time = 0.0
+    # Create the confusion matrix
+    cm = np.zeros([n_class, n_class])
     for images, labels in test_loader:
         start_batch = time()
         if args.gpu > 0:
@@ -289,13 +290,14 @@ def test(test_loader, model, n_class, json_data):
         _, predicted = torch.max(outputs.data, 1)
         test_time += time() - start_batch
         # Update the confusion matrix
-        cm = confusionMatrix(cm, predicted.cpu(), labels)
+        cm = getCM(cm, predicted.cpu(), labels)
 
+    stats = MulticlassStat(cm)
     print('******Test Results******')
     print('Time: ', round(test_time, 3), "seconds")
-    acc = getAccuracy(cm)
-    prec = getPrecision(cm)
-    recall = getRecall(cm)
+    acc = stats.accuracy
+    prec = stats.precision
+    recall = stats.recall
     print('Accuracy: %.2f %%'
           % (acc * 100))
     print('Precision: %.2f %%'
@@ -304,6 +306,7 @@ def test(test_loader, model, n_class, json_data):
           % (recall * 100))
 
     # Update the json data
+    json_data["confusion_matrix"] = pd.DataFrame(cm).to_dict(orient='split')
     json_data["test_accuracy"] = round(acc, 4)
     json_data["test_precision"] = round(prec, 4)
     json_data["test_time"] = round(test_time, 6)
@@ -313,7 +316,8 @@ def save_state(net, json_data, epoch, args):
     if epoch == -1:
         dir = args.save_dir
         epoch_str = 'trained'
-        del json_data["train"]["last_epoch"]
+        if "last_epoch" in json_data["train"]:
+            del json_data["train"]["last_epoch"]
     else:
         json_data["train"]["last_epoch"] = epoch
         dir = args.chk_dir
