@@ -3,7 +3,6 @@ import numpy as np
 from sklearn.metrics import roc_curve, auc
 from sklearn.preprocessing import label_binarize
 import matplotlib.pyplot as plt
-from itertools import cycle
 from scipy import interp
 import visdom
 
@@ -99,20 +98,6 @@ class MulticlassStat:
         self.tpr["bin"] = recall
         self.fpr["bin"] = fall_out
 
-        """
-        ufpr = np.divide(FP, sumrow)  # FP/(FP+FN)
-
-        self.fpr = np.sum(ufpr)/ufpr.shape[0]
-        # TN/(TN+FP) aka true negative rate (TNR) === 1-FPR ==  fall out or
-        # false positive rate FP/(FP+TP)
-        self.specificity = 1-self.fpr
-        # 2*precision*recall/(precision+recall)
-
-        self.fpr_all = ufpr
-        self.tpr_all = self.recall["micro"]
-        self.tpr = self.recall["macro"]
-        """
-
     def plot_multi_roc(self):
         # Compute ROC curve and ROC area for each class
         fpr = dict()
@@ -136,7 +121,7 @@ class MulticlassStat:
         tpr["macro"] = [0, self.tpr["macro"], 1]
         roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
 
-        self.plotmulticlassvis(fpr, tpr, roc_auc)
+        self.plotmulticlass(fpr, tpr, roc_auc)
 
         return roc_auc
 
@@ -180,7 +165,7 @@ class MulticlassStat:
         tpr["macro"] = mean_tpr
         roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
 
-        self.plotmulticlassvis(fpr, tpr, roc_auc)
+        self.plotmulticlass(fpr, tpr, roc_auc)
 
         return roc_auc
 
@@ -215,16 +200,23 @@ class MulticlassStat:
 
     def plotmulticlass(self, fpr, tpr, roc_auc):
         # Compute macro-average ROC curve and ROC area
+        cmap = plt.get_cmap('jet')
+        colors = cmap(np.linspace(0, 1.0, len(roc_auc["bin"]) + 2))
         lw = 2
         plt.figure()
 
-        colors = cycle(['aqua', 'darkorange', 'cornflowerblue'])
         for i, color in zip(range(self.n_class), colors):
-            plt.plot(fpr[i], tpr[i], color=color, lw=lw,
-                     label='ROC micro curve of class {0} (area = {1:0.2f})'
-                     ''.format(i, roc_auc[i]))
+            plt.plot(fpr["bin"][i], tpr["bin"][i], color=color, lw=lw,
+                     label='class {0} (area = {1:0.2f})'
+                     ''.format(i, roc_auc["bin"][i]))
 
         plt.plot([0, 1], [0, 1], 'k--', lw=lw)
+        plt.plot(fpr["micro"], tpr["micro"], color=colors[-2], lw=lw,
+                 linestyle=':', label='micro-average (area = {0:0.2f})'
+                 ''.format(roc_auc["micro"]))
+        plt.plot(fpr["macro"], tpr["macro"], color=colors[-1], lw=lw,
+                 linestyle=':', label='macro-average (area = {0:0.2f})'
+                 ''.format(roc_auc["macro"]))
         plt.xlim([0.0, 1.0])
         plt.ylim([0.0, 1.05])
         plt.xlabel('False Positive Rate')

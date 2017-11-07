@@ -1,16 +1,19 @@
 from __future__ import print_function
 import os
 from PIL import Image
+from torch import Tensor, is_tensor
 from torch.utils.data import Dataset
+from torchvision import transforms
 
 
 class MINC2500(Dataset):
     def __init__(self, root_dir, set_type, split, transform=None):
         self.root_dir = root_dir
         self.set_type = set_type
-        self.image_dir = os.path.join(self.root_dir, 'JPEGImages')
-        self.image_sets = os.path.join(self.root_dir, 'ImageSets', 'Main')
         self.transform = transform
+        # Those values are computed using the script 'get_minc2500_norm.py'
+        self.mean = Tensor([0.507207, 0.458292, 0.404162])
+        self.std = Tensor([0.254254, 0.252448, 0.266003])
 
         # Get the material categories from the categories.txt file
         file_name = os.path.join(root_dir, 'categories.txt')
@@ -41,5 +44,7 @@ class MINC2500(Dataset):
         image = image.convert('RGB')
         if self.transform:
             image = self.transform(image)
+            if is_tensor(image):
+                image = transforms.Normalize(self.mean, self.std)(image)
 
         return image, self.data[idx][1]

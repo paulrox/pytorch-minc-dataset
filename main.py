@@ -15,15 +15,13 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision import transforms
 from model_parser import get_model, PrintNetList
-from minc2500 import MINC2500
+from datasets.minc2500 import MINC2500
+from datasets.minc import MINC
 from cmstats import updateCM, MulticlassStat
 
 
 def main():
     global net
-    # Those values are computed using the script 'get_minc2500_norm.py'
-    mean = torch.Tensor([0.507207, 0.458292, 0.404162])
-    std = torch.Tensor([0.254254, 0.252448, 0.266003])
 
     batch_size = args.batch_size
 
@@ -133,19 +131,23 @@ def main():
         train_trans = transforms.Compose([
             transforms.RandomSizedCrop(224),
             transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)
+            transforms.ToTensor()
         ])
         val_trans = transforms.Compose([
             transforms.Scale(256),
             transforms.CenterCrop(224),
-            transforms.ToTensor(),
-            transforms.Normalize(mean, std)
+            transforms.ToTensor()
         ])
-        train_set = MINC2500(root_dir=args.data_root, set_type='train',
-                             split=1, transform=train_trans)
-        val_set = MINC2500(root_dir=args.data_root, set_type='validate',
-                           split=1, transform=val_trans)
+        if args.dataset == "minc2500":
+            train_set = MINC2500(root_dir=args.data_root, set_type='train',
+                                 split=1, transform=train_trans)
+            val_set = MINC2500(root_dir=args.data_root, set_type='validate',
+                               split=1, transform=val_trans)
+        else:
+            train_set = MINC(root_dir=args.data_root, set_type='train',
+                             transform=train_trans)
+            val_set = MINC(root_dir=args.data_root, set_type='validate',
+                           transform=val_trans)
 
         train_loader = DataLoader(dataset=train_set,
                                   batch_size=batch_size,
@@ -194,10 +196,13 @@ def main():
     test_trans = transforms.Compose([
         transforms.Scale(256),
         transforms.CenterCrop(224),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std)
+        transforms.ToTensor()
     ])
-    test_set = MINC2500(root_dir=args.data_root, set_type='test', split=1,
+    if args.dataset == "minc2500":
+        test_set = MINC2500(root_dir=args.data_root, set_type='test', split=1,
+                            transform=test_trans)
+    else:
+        test_set = MINC(root_dir=args.data_root, set_type='test', split=1,
                         transform=test_trans)
     test_loader = DataLoader(dataset=test_set, batch_size=batch_size,
                              shuffle=False, num_workers=8,
@@ -352,8 +357,8 @@ def test(test_loader, args, json_data):
     json_data["test_Fscore"] = round(stats.Fscore["macro"], 4)
     json_data["test_time"] = round(test_time, 6)
 
-    # stats.plot_multi_roc()
-    # stats.plot_scores_roc(all_labels.numpy(), scores.numpy())
+    stats.plot_multi_roc()
+    stats.plot_scores_roc(all_labels.numpy(), scores.numpy())
 
 
 def save_state(net, json_data, epoch, args):
@@ -391,8 +396,12 @@ if __name__ == '__main__':
     vis = visdom.Visdom()
 
     parser = argparse.ArgumentParser(description='Train and test a network' +
-                                                 'on the MINC-2500 dataset')
+                                                 'on the MINC datasets')
     # Data Options
+    parser.add_argument('--dataset', metavar='dset', default='minc2500',
+                        choices=['minc2500', 'minc'],
+                        help='name of the dataset to be used' +
+                        ' (default: minc2500)')
     parser.add_argument('--data-root', metavar='DIR', default='/media/paolo/' +
                         'Data/pytorch_datasets/minc-2500', help='path to ' +
                         'dataset (default: /media/paolo/Data/' +
