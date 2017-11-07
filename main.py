@@ -161,6 +161,7 @@ def main():
         optimizer = torch.optim.SGD(net.parameters(), l_rate,
                                     momentum=momentum,
                                     weight_decay=w_decay)
+
         # Visdom windows to draw the training graphs
         loss_window = vis.line(X=torch.zeros((1,)).cpu(),
                                Y=torch.zeros((1)).cpu(),
@@ -327,27 +328,32 @@ def test(test_loader, args, json_data):
     stats = MulticlassStat(cm)
     print('******Test Results******')
     print('Time: ', round(test_time, 3), "seconds")
-    acc = stats.accuracy
-    prec = stats.precision["macro"]
-    Fscore = stats.Fscore["macro"]
-    print('Accuracy: %.2f %%'
-          % (acc * 100))
-    print('Precision: %.2f %%'
-          % (prec * 100))
-    print('Fscore: %.2f %%'
-          % (Fscore * 100))
+    print('Accuracy (from CM): %.2f %%'
+          % (stats.accuracy * 100))
+    print('Average Accuracy: %.2f %%'
+          % (stats.avg_accuracy * 100))
+    print('Precision (macro): %.2f %%'
+          % (stats.precision["macro"] * 100))
+    print('Recall (macro): %.2f %%'
+          % (stats.recall["macro"] * 100))
+    print('Fscore (macro): %.2f %%'
+          % (stats.Fscore["macro"] * 100))
+    print('Precision (micro): %.2f %%'
+          % (stats.precision["micro"] * 100))
+    print('Recall (micro): %.2f %%'
+          % (stats.recall["micro"] * 100))
+    print('Fscore (micro): %.2f %%'
+          % (stats.Fscore["micro"] * 100))
 
     # Update the json data
     json_data["confusion_matrix"] = pd.DataFrame(cm).to_dict(orient='split')
-    json_data["test_accuracy"] = round(acc, 4)
-    json_data["test_precision"] = round(prec, 4)
-    json_data["test_Fscore"] = round(Fscore, 4)
+    json_data["test_accuracy"] = round(stats.accuracy, 4)
+    json_data["test_precision"] = round(stats.precision["macro"], 4)
+    json_data["test_Fscore"] = round(stats.Fscore["macro"], 4)
     json_data["test_time"] = round(test_time, 6)
 
-    # ret = stats.oneclass_decision_function_to_roc(all_labels.numpy(),
-    #                                              scores.numpy())
-    ret = stats.confusion_matrix_to_roc()
-    stats.plotmulticlass(ret["fpr"], ret["tpr"], ret["roc_auc"])
+    # stats.plot_multi_roc()
+    # stats.plot_scores_roc(all_labels.numpy(), scores.numpy())
 
 
 def save_state(net, json_data, epoch, args):
