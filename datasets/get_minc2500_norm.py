@@ -3,7 +3,7 @@ import torch
 from minc2500 import MINC2500
 from torchvision import transforms
 
-all_data = MINC2500(root_dir='/media/paolo/Data/pytorch_datasets/minc-2500',
+all_data = MINC2500(root_dir='../minc-2500_root',
                     set_type='all', transform=transforms.ToTensor())
 all_loader = torch.utils.data.DataLoader(dataset=all_data,
                                          batch_size=100,

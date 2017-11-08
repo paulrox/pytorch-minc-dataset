@@ -7,6 +7,7 @@ import os
 import sys
 import shortuuid
 import platform
+import ast
 from time import strftime, time
 import visdom
 import torch
@@ -24,23 +25,15 @@ def main():
     global net
 
     batch_size = args.batch_size
-
-    net = get_model(args.model, args.n_class)
-    if net is None:
-        print("Unknown model name:", args.model + ".",
-              "Use 'python model_parser.py --net-list'",
-              "to check the available network models")
-        sys.exit(2)
-    if args.gpu > 0:
-        net.cuda()
+    classes = ast.literal_eval(args.classes)
 
     # Start training from scratch
     if not args.resume and not args.test:
         # Load the network model
-        net = get_model(args.model, args.n_class)
+        net = get_model(args.model, len(classes))
         if net is None:
             print("Unknown model name:", args.model + ".",
-                  "Use 'python model_parser.py --net-list'",
+                  "Use '--net-list' option",
                   "to check the available network models")
             sys.exit(2)
         if args.gpu > 0:
@@ -61,7 +54,8 @@ def main():
         json_data = {"platform": platform.platform(),
                      "date": strftime("%Y-%m-%d_%H:%M:%S"), "impl": "pytorch",
                      "gpu": args.gpu, "dataset": "MINC-2500",
-                     "model": args.model, "epochs": args.epochs}
+                     "model": args.model, "epochs": args.epochs,
+                     "classes": classes}
         json_data["train"] = {"method": "SGD", "batch_size": args.batch_size,
                               "init_l_rate": args.l_rate,
                               "momentum": args.momentum,
@@ -87,7 +81,8 @@ def main():
         train_info = json_data["train"]
 
         # Load the network model
-        net = get_model(json_data["model"], args.n_class)
+        classes = json_data["classes"]
+        net = get_model(json_data["model"], len(classes))
         if (json_data["gpu"] > 0):
             net.cuda()
 
@@ -113,7 +108,8 @@ def main():
             json_data = json.load(f)
 
         # Load the network model
-        net = get_model(json_data["model"], args.n_class)
+        classes = json_data["classes"]
+        net = get_model(json_data["model"], len(classes))
         if (json_data["gpu"] > 0):
             net.cuda()
 
@@ -145,9 +141,9 @@ def main():
                                split=1, transform=val_trans)
         else:
             train_set = MINC(root_dir=args.data_root, set_type='train',
-                             transform=train_trans)
+                             classes=classes, transform=train_trans)
             val_set = MINC(root_dir=args.data_root, set_type='validate',
-                           transform=val_trans)
+                           classes=classes, transform=val_trans)
 
         train_loader = DataLoader(dataset=train_set,
                                   batch_size=batch_size,
@@ -202,8 +198,8 @@ def main():
         test_set = MINC2500(root_dir=args.data_root, set_type='test', split=1,
                             transform=test_trans)
     else:
-        test_set = MINC(root_dir=args.data_root, set_type='test', split=1,
-                        transform=test_trans)
+        test_set = MINC(root_dir=args.data_root, set_type='test',
+                        classes=classes, transform=test_trans)
     test_loader = DataLoader(dataset=test_set, batch_size=batch_size,
                              shuffle=False, num_workers=8,
                              pin_memory=(args.gpu > 0))
@@ -216,7 +212,7 @@ def main():
                   loss_window)
 
             # Check accuracy on validation set
-            validate(val_loader, epoch, args.n_class, val_windows)
+            validate(val_loader, epoch, len(args.classes), val_windows)
             json_data["train"]["train_time"] += round(time() - start_epoch, 3)
 
             # Save the checkpoint state
@@ -306,7 +302,8 @@ def test(test_loader, args, json_data):
     scores = torch.Tensor()
     all_labels = torch.LongTensor()
     # Create the confusion matrix
-    cm = np.zeros([args.n_class, args.n_class])
+    n_class = len(json_data["classes"])
+    cm = np.zeros([n_class, n_class])
     for images, labels in test_loader:
         start_batch = time()
         if args.gpu > 0:
@@ -402,28 +399,34 @@ if __name__ == '__main__':
                         choices=['minc2500', 'minc'],
                         help='name of the dataset to be used' +
                         ' (default: minc2500)')
-    parser.add_argument('--data-root', metavar='DIR', default='/media/paolo/' +
-                        'Data/pytorch_datasets/minc-2500', help='path to ' +
-                        'dataset (default: /media/paolo/Data/' +
-                        'pytorch_datasets/minc-2500)')
+    parser.add_argument('--data-root', metavar='DIR',
+                        default='./minc-2500_root', help='path to ' +
+                        'dataset (default: ./minc-2500_root)')
     parser.add_argument('--save-dir', metavar='DIR', default='./results',
                         help='path to trained models (default: results/)')
     parser.add_argument('--chk-dir', metavar='DIR', default='./checkpoints',
                         help='path to checkpoints (default: checkpoints/)')
-    parser.add_argument('--workers', metavar='W', type=int, default=8,
-                        help='number of worker threads for the data loader')
+    parser.add_argument('--workers', metavar='NUM_THREADS', type=int,
+                        default=8, help='number of worker threads for' +
+                        ' the data loader')
+
     # Model Options
-    parser.add_argument('--model', '-m', metavar='MODEL',
+    parser.add_argument('--model', '-m', metavar='MODEL_NAME',
                         default='tv-densenet121', type=str)
     parser.add_argument('--resume', default='', type=str, metavar='PATH',
                         help='path to latest checkpoint (default: none)')
-    parser.add_argument('--n-class', default=23, type=int, metavar='N',
-                        help='number of classes to classify (default: 23)')
+
+    parser.add_argument('--classes', metavar='CLASSES',
+                        default='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,' +
+                        '17,18,19,20,21,22]',
+                        help='indicies of the classes to be used for the' +
+                        ' classification')
+
     parser.add_argument('--test', default='', type=str, metavar='PATH',
                         help='path to the parameters of the model' +
                              ' to be tested')
     # Training Options
-    parser.add_argument('--gpu', type=int, default=1, metavar='G',
+    parser.add_argument('--gpu', type=int, default=1, metavar='GPU_NUM',
                         help='number of GPUs to use')
     parser.add_argument('--epochs', default=20, type=int, metavar='N',
                         help='number of total epochs to run (default: 20)')

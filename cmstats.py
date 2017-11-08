@@ -121,7 +121,8 @@ class MulticlassStat:
         tpr["macro"] = [0, self.tpr["macro"], 1]
         roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
 
-        self.plotmulticlass(fpr, tpr, roc_auc)
+        self.plotmulticlassvis(fpr, tpr, roc_auc)
+        # self.plotmulticlass(fpr, tpr, roc_auc)
 
         return roc_auc
 
@@ -165,7 +166,8 @@ class MulticlassStat:
         tpr["macro"] = mean_tpr
         roc_auc["macro"] = auc(fpr["macro"], tpr["macro"])
 
-        self.plotmulticlass(fpr, tpr, roc_auc)
+        self.plotmulticlassvis(fpr, tpr, roc_auc)
+        # self.plotmulticlass(fpr, tpr, roc_auc)
 
         return roc_auc
 
