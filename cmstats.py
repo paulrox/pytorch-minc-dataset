@@ -186,19 +186,22 @@ class MulticlassStat:
                 X=np.array(fpr["bin"][i]),
                 Y=np.array(tpr["bin"][i]),
                 win=roc_window,
-                name=str(i))
+                name='class ' + str(i) + '(area ' +
+                     str(round(roc_auc["bin"][i], 3)) + ')')
 
         vis.updateTrace(
             X=np.array(fpr['micro']),
             Y=np.array(tpr['micro']),
             win=roc_window,
-            name='micro')
+            name='micro (area ' +
+                 str(round(roc_auc["micro"], 3)) + ')')
 
         vis.updateTrace(
             X=np.array(fpr['macro']),
             Y=np.array(tpr['macro']),
             win=roc_window,
-            name='macro')
+            name='macro (area ' +
+                 str(round(roc_auc["macro"], 3)) + ')')
 
     def plotmulticlass(self, fpr, tpr, roc_auc):
         # Compute macro-average ROC curve and ROC area
