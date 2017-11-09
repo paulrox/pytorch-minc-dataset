@@ -226,3 +226,35 @@ class MulticlassStat:
         plt.title('')
         plt.legend(loc="lower right")
         plt.show()
+
+    def get_stats_dict(self, precision=4):
+        stats = dict()
+
+        stats["accuracy"] = round(self.accuracy, precision)
+        stats["avg_accuracy"] = round(self.avg_accuracy, precision)
+        stats["precision_u"] = round(self.precision["micro"], precision)
+        stats["precision_M"] = round(self.precision["macro"], precision)
+        stats["recall_u"] = round(self.recall["micro"], precision)
+        stats["recall_M"] = round(self.recall["macro"], precision)
+        stats["Fscore_u"] = round(self.Fscore["micro"], precision)
+        stats["Fscore_M"] = round(self.Fscore["macro"], precision)
+
+        return stats
+
+    def print_stats(self):
+        print('Accuracy (from CM): %.2f %%'
+              % (self.accuracy * 100))
+        print('Average Accuracy: %.2f %%'
+              % (self.avg_accuracy * 100))
+        print('Precision (macro): %.2f %%'
+              % (self.precision["macro"] * 100))
+        print('Recall (macro): %.2f %%'
+              % (self.recall["macro"] * 100))
+        print('Fscore (macro): %.2f %%'
+              % (self.Fscore["macro"] * 100))
+        print('Precision (micro): %.2f %%'
+              % (self.precision["micro"] * 100))
+        print('Recall (micro): %.2f %%'
+              % (self.recall["micro"] * 100))
+        print('Fscore (micro): %.2f %%'
+              % (self.Fscore["micro"] * 100))

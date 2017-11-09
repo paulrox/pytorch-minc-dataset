@@ -17,6 +17,12 @@ class MINC(Dataset):
         self.mean = torch.Tensor([0.48627451, 0.458823529, 0.407843137])
         # self.std = Tensor([0.254254, 0.252448, 0.266003])
 
+        # I exploit the fact that several patches are obtained from the
+        # same image by saving the last used image and by reusing it
+        # whenever possible
+        self.last_img = dict()
+        self.last_img["img_path"] = ''
+
         # Get the material categories from the categories.txt file
         file_name = os.path.join(root_dir, 'categories.txt')
         self.categories = dict()
@@ -64,27 +70,32 @@ class MINC(Dataset):
 
     def __getitem__(self, idx):
         img_path = self.data[idx][1]
-        image = Image.open(img_path)
-        # Sometimes the images are opened as grayscale, so I need to force RGB
-        image = image.convert('RGB')
+
+        if self.last_img["img_path"] != img_path:
+            # Sometimes the images are opened as grayscale,
+            # so I need to force RGB
+            self.last_img["image"] = Image.open(img_path).convert('RGB')
+            self.last_img["img_path"] = img_path
+
+        width, height = self.last_img["image"].size
         patch_center = self.data[idx][2]
-        patch_center = [patch_center[0] * image.width,
-                        patch_center[1] * image.height]
-        if image.width < image.height:
-            patch_size = int(image.width * self.scale)
+        patch_center = [patch_center[0] * width,
+                        patch_center[1] * height]
+        if width < height:
+            patch_size = int(width * self.scale)
         else:
-            patch_size = int(image.height * self.scale)
+            patch_size = int(height * self.scale)
         box = (patch_center[0] - patch_size / 2,
                patch_center[1] - patch_size / 2,
                patch_center[0] + patch_size / 2,
                patch_center[1] + patch_size / 2)
-        image = image.crop(box)
+        patch = self.last_img["image"].crop(box)
         if self.transform:
-            image = self.transform(image)
-            if torch.is_tensor(image):
-                torch.add(image[0, :, :], -self.mean[0])
-                torch.add(image[1, :, :], -self.mean[1])
-                torch.add(image[2, :, :], -self.mean[2])
+            patch = self.transform(patch)
+            if torch.is_tensor(patch):
+                torch.add(patch[0, :, :], -self.mean[0])
+                torch.add(patch[1, :, :], -self.mean[1])
+                torch.add(patch[2, :, :], -self.mean[2])
                 # image = transforms.Normalize(self.mean, self.std)(image)
 
-        return image, self.data[idx][0]
+        return patch, self.data[idx][0]

@@ -24,88 +24,77 @@ from cmstats import updateCM, MulticlassStat
 def main():
     global net
 
+    model = args.model
+    dataset = args.dataset
     batch_size = args.batch_size
     classes = ast.literal_eval(args.classes)
+    gpu = args.gpu
+    seed = args.seed
+    # Training parameters
+    method = args.method
+    epochs = args.epochs
+    l_rate = args.l_rate
+    momentum = args.momentum
+    w_decay = args.w_decay
 
     # Start training from scratch
     if not args.resume and not args.test:
         # Load the network model
-        net = get_model(args.model, len(classes))
+        net = get_model(model, len(classes))
         if net is None:
-            print("Unknown model name:", args.model + ".",
+            print("Unknown model name:", model + ".",
                   "Use '--net-list' option",
                   "to check the available network models")
             sys.exit(2)
-        if args.gpu > 0:
+        if gpu > 0:
             net.cuda()
 
         # Initialize the random generator
-        if args.seed:
-            seed = args.seed
-            torch.manual_seed(seed)
-            if args.gpu > 0:
-                torch.cuda.manual_seed_all(seed)
-        else:
-            seed = torch.initial_seed()
-            if args.gpu > 0:
-                torch.cuda.manual_seed_all(seed)
+        torch.manual_seed(seed)
+        if gpu > 0:
+            torch.cuda.manual_seed_all(seed)
 
         # Dictionary used to store the training results and metadata
         json_data = {"platform": platform.platform(),
                      "date": strftime("%Y-%m-%d_%H:%M:%S"), "impl": "pytorch",
-                     "gpu": args.gpu, "dataset": "MINC-2500",
-                     "model": args.model, "epochs": args.epochs,
+                     "dataset": dataset, "gpu": gpu,
+                     "model": model, "epochs": epochs,
                      "classes": classes}
-        json_data["train"] = {"method": "SGD", "batch_size": args.batch_size,
-                              "init_l_rate": args.l_rate,
-                              "momentum": args.momentum,
-                              "w_decay": args.w_decay,
-                              "seed": seed,
-                              "last_epoch": 0,
-                              "train_time": 0.0}
+        epochs = range(epochs)
+
+        if method == "SGD":
+            optimizer = torch.optim.SGD(net.parameters(),
+                                        lr=l_rate,
+                                        momentum=momentum,
+                                        weight_decay=w_decay)
+        json_data["train_params"] = {"method": method,
+                                     "batch_size": batch_size,
+                                     "seed": seed,
+                                     "last_epoch": 0,
+                                     "train_time": 0.0}
+        # Extract training parameters from the optimizer state
+        for t_param in optimizer.state_dict()["param_groups"][0]:
+            if t_param is not "params":
+                json_data["train_params"][t_param] = \
+                    optimizer.state_dict()["param_groups"][0][t_param]
+
         par = 0
         for parameter in net.parameters():
             par += parameter.numel()
         json_data["num_params"] = par
 
-        # Training parameters
-        epochs = range(args.epochs)
-        l_rate = args.l_rate
-        momentum = args.momentum
-        w_decay = args.w_decay
-
-    # Resume from a training checkpoint
-    elif args.resume:
-        with open(args.resume, 'rb') as f:
+    # Resume from a training checkpoint or test the network
+    else:
+        with open(args.resume or args.test, 'rb') as f:
             json_data = json.load(f)
-        train_info = json_data["train"]
-
-        # Load the network model
-        classes = json_data["classes"]
-        net = get_model(json_data["model"], len(classes))
-        if (json_data["gpu"] > 0):
-            net.cuda()
-
-        if train_info["method"] == "SGD":
-            optimizer = torch.optim.SGD(net.parameters(),
-                                        train_info["init_l_rate"],
-                                        momentum=train_info["momentum"],
-                                        weight_decay=train_info["w_decay"])
+        train_info = json_data["train_params"]
         epochs = range(train_info["last_epoch"], json_data["epochs"])
+        dataset = json_data["dataset"]
         batch_size = train_info["batch_size"]
-        l_rate = train_info["init_l_rate"]
-        momentum = train_info["momentum"]
-        w_decay = train_info["w_decay"]
         torch.manual_seed(train_info["seed"])
+
         if json_data["gpu"] > 0:
             torch.cuda.manual_seed_all(train_info["seed"])
-        # Load the saved parameters (in the same directory as the json file)
-        chk_dir = os.path.split(args.resume)[0]
-        net.load_state_dict(torch.load(os.path.join(chk_dir,
-                                                    json_data["net_state"])))
-    else:  # Test the model
-        with open(args.test, 'rb') as f:
-            json_data = json.load(f)
 
         # Load the network model
         classes = json_data["classes"]
@@ -113,17 +102,47 @@ def main():
         if (json_data["gpu"] > 0):
             net.cuda()
 
-        seed = json_data["train"]["seed"]
-        torch.manual_seed(seed)
-        if json_data["gpu"] > 0:
-            torch.cuda.manual_seed_all(long(seed))
-        # Load the saved parameters (in the same directory as the json file)
-        net_dir = os.path.split(args.test)[0]
-        net.load_state_dict(torch.load(os.path.join(net_dir,
-                                                    json_data["net_state"])))
+        if args.resume:
+            # Resume training
+            # Load the saved state
+            # (in the same directory as the json file)
+            chk_dir = os.path.split(args.resume)[0]
+            state = torch.load(os.path.join(chk_dir, json_data["state"]))
 
-    # Prepare data structures for the training phase
+            # Load the network parameters
+            net.load_state_dict(state["params"])
+
+            # Load the optimizer state
+            method = train_info["method"]
+            if method == "SGD":
+                optimizer = torch.optim.SGD(net.parameters())
+                optimizer.load_state_dict(state["optim"])
+
+        else:
+            # Test the network
+            # Load the saved parameters
+            # (in the same directory as the json file)
+            res_dir = os.path.split(args.test)[0]
+            if "params" in json_data:
+                net.load_state_dict(torch.load(os.path.join(res_dir,
+                                                            json_data["params"]
+                                                            )))
+            elif "state" in json_data:
+                # Test a checkpointed network
+                state = torch.load(os.path.join(res_dir, json_data["state"]))
+                net.load_state_dict(state["params"])
+            else:
+                sys.exit("No network parameters found in JSON file")
+
+    if args.data_root:
+            data_root = args.data_root
+    else:
+        # Default directory
+        data_root = os.path.join(os.curdir, dataset + "_root")
+
+    # Prepare data structures
     if not args.test:
+        # Training phase
         train_trans = transforms.Compose([
             transforms.RandomSizedCrop(224),
             transforms.RandomHorizontalFlip(),
@@ -134,31 +153,32 @@ def main():
             transforms.CenterCrop(224),
             transforms.ToTensor()
         ])
-        if args.dataset == "minc2500":
-            train_set = MINC2500(root_dir=args.data_root, set_type='train',
+
+        if dataset == "minc2500":
+            train_set = MINC2500(root_dir=data_root, set_type='train',
                                  split=1, transform=train_trans)
-            val_set = MINC2500(root_dir=args.data_root, set_type='validate',
+            val_set = MINC2500(root_dir=data_root, set_type='validate',
                                split=1, transform=val_trans)
         else:
-            train_set = MINC(root_dir=args.data_root, set_type='train',
+            train_set = MINC(root_dir=data_root, set_type='train',
                              classes=classes, transform=train_trans)
-            val_set = MINC(root_dir=args.data_root, set_type='validate',
+            val_set = MINC(root_dir=data_root, set_type='validate',
                            classes=classes, transform=val_trans)
 
         train_loader = DataLoader(dataset=train_set,
                                   batch_size=batch_size,
-                                  shuffle=True, num_workers=8,
+                                  shuffle=True, num_workers=args.workers,
                                   pin_memory=(args.gpu > 0))
         val_loader = DataLoader(dataset=val_set,
                                 batch_size=batch_size,
-                                shuffle=False, num_workers=8,
+                                shuffle=False, num_workers=args.workers,
                                 pin_memory=(args.gpu > 0))
 
         # Loss and Optimizer
-        criterion = nn.CrossEntropyLoss().cuda()
-        optimizer = torch.optim.SGD(net.parameters(), l_rate,
-                                    momentum=momentum,
-                                    weight_decay=w_decay)
+        if gpu > 0:
+            criterion = nn.CrossEntropyLoss().cuda()
+        else:
+            criterion = nn.CrossEntropyLoss()
 
         # Visdom windows to draw the training graphs
         loss_window = vis.line(X=torch.zeros((1,)).cpu(),
@@ -188,24 +208,27 @@ def main():
                                            legend=['Recall']))
         val_windows = [acc_window, prec_window, recall_window]
 
-    # Load the testing set
+    # Testing phase
     test_trans = transforms.Compose([
         transforms.Scale(256),
         transforms.CenterCrop(224),
         transforms.ToTensor()
     ])
-    if args.dataset == "minc2500":
-        test_set = MINC2500(root_dir=args.data_root, set_type='test', split=1,
+    if dataset == "minc2500":
+        test_set = MINC2500(root_dir=data_root, set_type='test', split=1,
                             transform=test_trans)
     else:
-        test_set = MINC(root_dir=args.data_root, set_type='test',
+        test_set = MINC(root_dir=data_root, set_type='test',
                         classes=classes, transform=test_trans)
     test_loader = DataLoader(dataset=test_set, batch_size=batch_size,
-                             shuffle=False, num_workers=8,
+                             shuffle=False, num_workers=args.workers,
                              pin_memory=(args.gpu > 0))
 
     if not args.test:
+
+        # Training loop
         for epoch in epochs:
+
             # Train the Model
             start_epoch = time()
             train(train_loader, criterion, optimizer, epoch, epochs,
@@ -213,15 +236,16 @@ def main():
 
             # Check accuracy on validation set
             validate(val_loader, epoch, len(args.classes), val_windows)
-            json_data["train"]["train_time"] += round(time() - start_epoch, 3)
+            json_data["train_params"]["train_time"] += round(time() -
+                                                             start_epoch, 3)
 
             # Save the checkpoint state
-            save_state(net, json_data, epoch + 1, args)
+            save_state(net, optimizer, json_data, epoch + 1, args.chk_dir)
 
     # Test the model on the testing set
-    test(test_loader, args, json_data)
-    # Save the trained and tested model
-    save_state(net, json_data, -1, args)
+    test(test_loader, args, json_data,)
+    # Save the trained network parameters and the testing results
+    save_params(net, json_data, args.save_dir)
 
 
 def train(train_loader, criterion, optimizer, epoch, epochs,
@@ -326,48 +350,26 @@ def test(test_loader, args, json_data):
                           json_data["UUID"] + ".scores")
     torch.save(scores, f_name)
 
-    # Compute the testing statistics
-    stats = MulticlassStat(cm)
+    # Compute the testing statistics and print them
+    mc_stats = MulticlassStat(cm)
     print('******Test Results******')
     print('Time: ', round(test_time, 3), "seconds")
-    print('Accuracy (from CM): %.2f %%'
-          % (stats.accuracy * 100))
-    print('Average Accuracy: %.2f %%'
-          % (stats.avg_accuracy * 100))
-    print('Precision (macro): %.2f %%'
-          % (stats.precision["macro"] * 100))
-    print('Recall (macro): %.2f %%'
-          % (stats.recall["macro"] * 100))
-    print('Fscore (macro): %.2f %%'
-          % (stats.Fscore["macro"] * 100))
-    print('Precision (micro): %.2f %%'
-          % (stats.precision["micro"] * 100))
-    print('Recall (micro): %.2f %%'
-          % (stats.recall["micro"] * 100))
-    print('Fscore (micro): %.2f %%'
-          % (stats.Fscore["micro"] * 100))
+    mc_stats.print_stats()
 
     # Update the json data
-    json_data["confusion_matrix"] = pd.DataFrame(cm).to_dict(orient='split')
-    json_data["test_accuracy"] = round(stats.accuracy, 4)
-    json_data["test_precision"] = round(stats.precision["macro"], 4)
-    json_data["test_Fscore"] = round(stats.Fscore["macro"], 4)
-    json_data["test_time"] = round(test_time, 6)
+    json_data["test_stats"] = mc_stats.get_stats_dict()
+    json_data["test_stats"]["confusion_matrix"] = \
+        pd.DataFrame(cm).to_dict(orient='split')
+    json_data["test_stats"]["test_time"] = round(test_time, 6)
 
-    stats.plot_multi_roc()
-    stats.plot_scores_roc(all_labels.numpy(), scores.numpy())
+    # Plot the ROCs
+    mc_stats.plot_multi_roc()
+    mc_stats.plot_scores_roc(all_labels.numpy(), scores.numpy())
 
 
-def save_state(net, json_data, epoch, args):
-    if epoch == -1:
-        dir = args.save_dir
-        epoch_str = ''
-        if "last_epoch" in json_data["train"]:
-            del json_data["train"]["last_epoch"]
-    else:
-        json_data["train"]["last_epoch"] = epoch
-        dir = args.chk_dir
-        epoch_str = '_epoch_' + str(epoch)
+def save_state(net, optimizer, json_data, epoch, dir):
+    json_data["train_params"]["last_epoch"] = epoch
+    epoch_str = '_epoch_' + str(epoch)
 
     if epoch == 1:
         # Generate the UUID (8 characters long)
@@ -380,10 +382,31 @@ def save_state(net, json_data, epoch, args):
                           json_data["model"] + "_" +
                           json_data["dataset"] + "_" +
                           id + epoch_str)
-    # Save model parameters
-    torch.save(net.state_dict(), f_name + '.params')
+    # Save training state
+    state = dict()
+    state["params"] = net.state_dict()
+    state["optim"] = optimizer.state_dict()
+    torch.save(state, f_name + '.state')
     # Save experiment metadata
-    json_data['net_state'] = os.path.split(f_name + '.params')[1]
+    json_data['state'] = os.path.split(f_name + '.state')[1]
+    with open(f_name + ".json", 'wb') as f:
+        json.dump(json_data, f)
+
+
+def save_params(net, json_data, dir):
+    if "last_epoch" in json_data["train_params"]:
+        del json_data["train_params"]["last_epoch"]
+    if "state" in json_data:
+        del json_data["state"]
+
+    f_name = os.path.join(dir, json_data["impl"] + "_" +
+                          json_data["model"] + "_" +
+                          json_data["dataset"] + "_" +
+                          json_data["UUID"])
+    # Save training state
+    torch.save(net.state_dict(), f_name + '.state')
+    # Save experiment metadata
+    json_data['params'] = os.path.split(f_name + '.params')[1]
     with open(f_name + ".json", 'wb') as f:
         json.dump(json_data, f)
 
@@ -399,9 +422,8 @@ if __name__ == '__main__':
                         choices=['minc2500', 'minc'],
                         help='name of the dataset to be used' +
                         ' (default: minc2500)')
-    parser.add_argument('--data-root', metavar='DIR',
-                        default='./minc-2500_root', help='path to ' +
-                        'dataset (default: ./minc-2500_root)')
+    parser.add_argument('--data-root', metavar='DIR', help='path to ' +
+                        'dataset (default: ./$(DATASET)_root)')
     parser.add_argument('--save-dir', metavar='DIR', default='./results',
                         help='path to trained models (default: results/)')
     parser.add_argument('--chk-dir', metavar='DIR', default='./checkpoints',
@@ -413,19 +435,15 @@ if __name__ == '__main__':
     # Model Options
     parser.add_argument('--model', '-m', metavar='MODEL_NAME',
                         default='tv-densenet121', type=str)
-    parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                        help='path to latest checkpoint (default: none)')
-
     parser.add_argument('--classes', metavar='CLASSES',
                         default='[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,' +
                         '17,18,19,20,21,22]',
                         help='indicies of the classes to be used for the' +
                         ' classification')
 
-    parser.add_argument('--test', default='', type=str, metavar='PATH',
-                        help='path to the parameters of the model' +
-                             ' to be tested')
     # Training Options
+    parser.add_argument('--method', default='SGD', metavar='METHOD',
+                        help='training method to be used')
     parser.add_argument('--gpu', type=int, default=1, metavar='GPU_NUM',
                         help='number of GPUs to use')
     parser.add_argument('--epochs', default=20, type=int, metavar='N',
@@ -442,9 +460,14 @@ if __name__ == '__main__':
                         default=179424691,
                         help='random seed (default: 179424691)')
     # Other Options
+    parser.add_argument('--resume', default='', type=str, metavar='PATH',
+                        help='path to latest checkpoint (default: none)')
     parser.add_argument('--net-list', action=PrintNetList,
                         help='Print the list of the available network' +
                         'architectures')
+    parser.add_argument('--test', default='', type=str, metavar='PATH',
+                        help='path to the parameters of the model' +
+                             ' to be tested')
 
     args = parser.parse_args()
 
