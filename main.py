@@ -23,8 +23,6 @@ from cmstats import updateCM, MulticlassStat
 
 
 def main():
-    global net
-
     # Model and data parameters
     model = args.model
     dataset = args.dataset
@@ -279,13 +277,13 @@ def main():
 
             # Train the Model
             scheduler.step()
-            train(train_loader, criterion, optimizer, epoch, epochs,
+            train(net, train_loader, criterion, optimizer, epoch, epochs,
                   loss_window)
 
             # Check accuracy on validation set
             print("Validating network on the", len(val_set),
                   "validation images...")
-            validate(val_loader, epoch, len(classes), val_windows)
+            validate(net, val_loader, epoch, len(classes), val_windows)
             json_data["train_params"]["train_time"] += round(time() -
                                                              start_epoch, 3)
 
@@ -294,13 +292,25 @@ def main():
 
     # Test the model on the testing set
     print("Testing network on the", len(test_set), "testing images...")
-    test(test_loader, args, json_data)
+    test(net, test_loader, args, json_data)
     # Save the trained network parameters and the testing results
     save_params(net, json_data, args.save_dir)
 
 
-def train(train_loader, criterion, optimizer, epoch, epochs,
+def train(net, train_loader, criterion, optimizer, epoch, epochs,
           loss_window):
+    """ Train the network on the whole training set
+
+    Parameters:
+    net -- Module object containing the network model;
+    train_loader -- DataLoader object for the dataset in use;
+    criterion -- Method used to compute the loss;
+    optimizer -- Method used to update the network paramets;
+    epoch -- actual training epoch;
+    epochs -- total training epochs;
+    loss_window -- visdom window used to plot the loss;
+    """
+
     print_interval = 50
     batch_time = 0.0
     # Switch to train mode
@@ -335,7 +345,18 @@ def train(train_loader, criterion, optimizer, epoch, epochs,
                      loss.data[0], batch_time / (i + 1)))
 
 
-def validate(val_loader, epoch, n_class, val_windows):
+def validate(net, val_loader, epoch, n_class, val_windows):
+    """ Compute the network accuracy on the validation set
+
+    Parameters:
+    net -- Module object containing the network model;
+    val_loader -- DataLoader object for the validation set
+    epoch -- Actual training epoch
+    n_class -- Number of object classes
+    val_windows -- List containing the visdom windows used for validation
+                   plots
+    """
+
     # Switch to evaluation mode
     net.eval()
 
@@ -375,7 +396,14 @@ def validate(val_loader, epoch, n_class, val_windows):
           % (acc * 100))
 
 
-def test(test_loader, args, json_data):
+def test(net, test_loader, json_data):
+    """ Compute the network outputs and extract the performance measues
+
+    Parameters:
+    net -- Module object containing the network model;
+    test_loader -- DataLoader object for the testing set;
+    json_data -- Dictionary used to store the training metadata;
+    """
     # Switch to evaluation mode
     net.eval()
 
@@ -425,6 +453,16 @@ def test(test_loader, args, json_data):
 
 
 def save_state(net, optimizer, json_data, epoch, dir):
+    """ Saves the training status.
+
+    Parameters:
+    net -- Module object containing the network model;
+    optimizer -- Optimizer object obtained from torch.optim
+    json_data -- Dictionary used to store the training metadata;
+    epoch -- Actual training epoch
+    dir -- Directory used to save the data
+    """
+
     json_data["train_params"]["last_epoch"] = epoch
     epoch_str = '_epoch_' + str(epoch)
 
@@ -459,6 +497,14 @@ def save_state(net, optimizer, json_data, epoch, dir):
 
 
 def save_params(net, json_data, dir):
+    """ Saves the parameteres of the trained network.
+
+    Parameters:
+    net -- Module object containing the network model;
+    json_data -- Dictionary used to store the training metadata;
+    dir -- Directory used to save the data
+    """
+
     if "last_epoch" in json_data["train_params"]:
         del json_data["train_params"]["last_epoch"]
     if "state" in json_data:

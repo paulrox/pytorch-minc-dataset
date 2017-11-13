@@ -8,6 +8,13 @@ import visdom
 
 
 def updateCM(mat, predicted, actual):
+    """ Updates the confusion matrix according to the given parameters
+
+    Parameters:
+    mat -- Confusion matrix to be updated;
+    predicted -- Tensor containing the predicted class labels;
+    actual -- Tensor containing the real class labels;
+    """
 
     for i in range(len(actual)):
         mat[actual[i], int(round(predicted[i]))] += 1
@@ -15,8 +22,25 @@ def updateCM(mat, predicted, actual):
 
 
 class MulticlassStat:
+    """ Allows to extract the performance measures for multi-class
+    classification and the ROC.
+    The performance measure are taken from the paper:
+    'A systematic analysis of performance measures for classification tasks'
+    (http://www.sciencedirect.com/science/article/pii/S0306457309000259)
+    """
 
     def __init__(self, matrix=None, n_class=None, pred=None, actual=None):
+        """ MulticlassStat constructor. The confusion matrix con be
+        directly provided or it can be computed by prvoding the class
+        prediction labels and the real class labels.
+
+        Parameters:
+        matrix -- Confusion matrix to be used to extract the measures;
+        n_class -- Number of different classes for the classification task;
+        pred -- Tensor containing the labels of the predicted classes;
+        actual -- Tensor containing the labels of the real classes;
+        """
+
         if matrix is None:
             # Compute the confusion matrix
             if pred is not None and actual is not None and \
@@ -99,6 +123,10 @@ class MulticlassStat:
         self.fpr["bin"] = fall_out
 
     def plot_multi_roc(self):
+        """ Plots the ROCs of the 'n_class' binary classifiers (one vs. all)
+        and of the multi-class ones using micro and macro averaging.
+        """
+
         # Compute ROC curve and ROC area for each class
         fpr = dict()
         tpr = dict()
@@ -127,6 +155,15 @@ class MulticlassStat:
         return roc_auc
 
     def plot_scores_roc(self, y_test, y_score):
+        """ Plots the ROCs of the 'n_class' binary classifiers (one vs. all)
+        and of the multi-class ones using micro and macro averaging. In this
+        case the network outputs (scores) are used to obtain the ROCs.
+
+        Parameters:
+        y_test --- Tensor containing the real class labels;
+        y_score --- Tensor containing the class scores;
+        """
+
         # Compute ROC curve and ROC area for each class
         fpr = dict()
         tpr = dict()
@@ -172,6 +209,8 @@ class MulticlassStat:
         return roc_auc
 
     def plotmulticlassvis(self, fpr, tpr, roc_auc):
+        """ Plots the ROCs using Visdom """
+
         vis = visdom.Visdom()
 
         # Visdom windows to draw the training graphs
@@ -204,6 +243,7 @@ class MulticlassStat:
                  str(round(roc_auc["macro"], 3)) + ')')
 
     def plotmulticlass(self, fpr, tpr, roc_auc):
+        """ Plots the ROCs using matplotlib """
         # Compute macro-average ROC curve and ROC area
         cmap = plt.get_cmap('jet')
         colors = cmap(np.linspace(0, 1.0, len(roc_auc["bin"]) + 2))
@@ -231,6 +271,8 @@ class MulticlassStat:
         plt.show()
 
     def get_stats_dict(self, precision=4):
+        """ Return a dictionary containing the obtained measures """
+
         stats = dict()
 
         stats["accuracy"] = round(self.accuracy, precision)
@@ -245,6 +287,8 @@ class MulticlassStat:
         return stats
 
     def print_stats(self):
+        """ Prints the obtained measures """
+
         print('Accuracy (from CM): %.2f %%'
               % (self.accuracy * 100))
         print('Average Accuracy: %.2f %%'
