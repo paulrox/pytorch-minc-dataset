@@ -50,6 +50,9 @@ def get_std(mean):
             next_perc += 1
             perc_time = time.time()
 
+    print("SUM:", sum)
+    print("Pixels:", pixels)
+
     sum[0] = sum[0] / pixels
     sum[1] = sum[1] / pixels
     sum[2] = sum[2] / pixels

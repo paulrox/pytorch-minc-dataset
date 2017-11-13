@@ -301,10 +301,14 @@ def main():
 
 def train(train_loader, criterion, optimizer, epoch, epochs,
           loss_window):
+    print_interval = 50
+    batch_time = 0.0
     # Switch to train mode
     net.train()
 
     for i, (images, labels) in enumerate(train_loader):
+        start_batch = time()
+
         if args.gpu > 0:
             images = Variable(images.cuda(async=True))
             labels = Variable(labels.cuda(async=True))
@@ -318,15 +322,17 @@ def train(train_loader, criterion, optimizer, epoch, epochs,
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
-        if i % 50 == 0:
+
+        batch_time += time() - start_batch
+        if i % print_interval == 0:
             vis.line(
                 X=torch.ones((1, 1)).cpu() * ((epoch) * len(train_loader) + i),
                 Y=torch.Tensor([loss.data[0]]).unsqueeze(0).cpu(),
                 win=loss_window,
                 update='append')
-            print('Epoch [%d/%d], Iter [%d/%d] Loss: %.4f'
+            print('Epoch [%d/%d], Iter [%d/%d] Loss: %.4f Time: %.3f s/batch'
                   % (epoch + 1, epochs[-1] + 1, i, len(train_loader),
-                     loss.data[0]))
+                     loss.data[0], batch_time / (i + 1)))
 
 
 def validate(val_loader, epoch, n_class, val_windows):
